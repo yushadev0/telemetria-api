@@ -1,0 +1,21 @@
+version: '3.8'
+
+services:
+  # 1. Bizim Telemetria API Servisimiz
+  api:
+    build: .
+    ports:
+      - "8000:8000"
+    depends_on:
+      - redis_cache
+    volumes:
+      - .:/app
+      - ./f1_cache:/app/f1_cache  # FastF1'in indirdiği veriler konteyner silinince kaybolmasın diye eşitliyoruz
+    environment:
+      - REDIS_HOST=redis_cache    # API'ye Redis'i nerede bulacağını söylüyoruz
+
+  # 2. Redis Önbellek Sunucusu (Windows'ta çalışmayan ama Docker ile saniyede kurulan o sistem)
+  redis_cache:
+    image: "redis:alpine"         # Alpine, en hafif ve hızlı Linux sürümüdür
+    ports:
+      - "6379:6379"
