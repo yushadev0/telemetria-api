@@ -1,49 +1,84 @@
-from fastapi import FastAPI, HTTPException
-from services.f1_service import get_fastest_lap_telemetry
+from fastapi import FastAPI, HTTPException, Request
+from services.f1_service import get_lap_telemetry, get_comparison_telemetry
 from core.redis_client import get_from_cache, set_to_cache
 from routers import sessions
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
 
+# Rate Limiter'ı IP adresine göre başlatıyoruz
+limiter = Limiter(key_func=get_remote_address)
 app = FastAPI(title="Telemetria API", version="0.1.0")
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 @app.get("/")
-def read_root():
+@limiter.limit("30/minute")
+def read_root(request: Request):
     return {"message": "Telemetria API Sistemine Hoş Geldiniz. Motorlar çalışıyor!"}
 
+# 1. TEKLİ PİLOT TELEMETRİSİ (Lap by Lap & Track Map destekli)
 @app.get("/api/v1/telemetry/{race_year}/{race_name}/{session_type}/{driver_code}")
-def get_telemetry(race_year: int, race_name: str, session_type: str, driver_code: str):
+@limiter.limit("30/minute")
+def get_telemetry(request: Request, race_year: int, race_name: str, session_type: str, driver_code: str, lap: str = "fastest"):
     
-    # 1. Benzersiz bir önbellek anahtarı (cache key) oluşturuyoruz. Her seans ve pilot için eşsiz olmalı.
-    cache_key = f"telemetry_{race_year}_{race_name}_{session_type}_{driver_code}"
+    # lap parametresi cache key'e eklendi ki farklı turlar birbirine karışmasın
+    cache_key = f"telemetry_{race_year}_{race_name}_{session_type}_{driver_code}_{lap}"
     
-    # 2. Önce Redis'e (RAM'e) soruyoruz
     cached_response = get_from_cache(cache_key)
-    
-    # Eğer veri RAM'de varsa, FastF1 veya Pandas'ı hiç yormadan doğrudan dön! (Süper hızlı kısım)
     if cached_response:
-        cached_response["cache"] = "hit"  # <--- EKSİK OLAN SİHİRLİ SATIR BU
+        cached_response["cache"] = "hit"
         return cached_response
         
-    # 3. Veri RAM'de yoksa, ağır işçiliği yapmak üzere servisimizi çağırıyoruz
-    telemetry_response = get_fastest_lap_telemetry(race_year, race_name, session_type, driver_code)
+    # Ağır işçilik (f1_service çağrılıyor)
+    telemetry_response = get_lap_telemetry(race_year, race_name, session_type, driver_code, lap)
     
-    # Hata kontrolü
     if isinstance(telemetry_response, dict) and "error_message" in telemetry_response:
         raise HTTPException(status_code=400, detail=telemetry_response["error_message"])
         
-    # Başarılı yanıtı oluştur
     final_response = {
         "status": "success",
-        "cache": "miss", # İstemciye verinin bu seferlik taze hesaplandığını söylüyoruz
+        "cache": "miss",
         "driver_code": driver_code,
         "track_name": race_name,
-        "data_points": len(telemetry_response["time"]) if "time" in telemetry_response else 0,
+        "lap_requested": lap,
+        "data_points": len(telemetry_response.get("time", [])),
         "telemetry_data": telemetry_response
     }
     
-    # 4. Yanıtı gelecekteki istekler için Redis'e yaz
     set_to_cache(cache_key, final_response)
- 
-    
     return final_response
 
+
+# 2. İKİ PİLOTU KARŞILAŞTIRMA VE DELTA HESAPLAMA ENDPOINT'İ
+@app.get("/api/v1/compare/{race_year}/{race_name}/{session_type}/{driver1}/{driver2}")
+@limiter.limit("15/minute") # Ağır bir işlem olduğu için limiti biraz daha sıkı tuttuk
+def get_compare(request: Request, race_year: int, race_name: str, session_type: str, driver1: str, driver2: str, lap: str = "fastest"):
+    
+    # Karşılaştırma için özel cache key (Sıralama fark etmesin diye alfabetik dizebilirsin ama şimdilik doğrudan alıyoruz)
+    cache_key = f"compare_{race_year}_{race_name}_{session_type}_{driver1}_{driver2}_{lap}"
+    
+    cached_response = get_from_cache(cache_key)
+    if cached_response:
+        cached_response["cache"] = "hit"
+        return cached_response
+
+    # Servisten numpy enterpolasyonlu delta verisini çek
+    compare_response = get_comparison_telemetry(race_year, race_name, session_type, driver1, driver2, lap)
+
+    if isinstance(compare_response, dict) and "error_message" in compare_response:
+        raise HTTPException(status_code=400, detail=compare_response["error_message"])
+
+    final_response = {
+        "status": "success",
+        "cache": "miss",
+        "track_name": race_name,
+        "lap_requested": lap,
+        "comparison_data": compare_response
+    }
+
+    set_to_cache(cache_key, final_response)
+    return final_response
+
+# Yardımcı takvim uç noktaları
 app.include_router(sessions.router, prefix="/api/v1/schedule", tags=["Schedule"])

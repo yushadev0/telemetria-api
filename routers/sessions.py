@@ -1,19 +1,26 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 import fastf1
 import pandas as pd
 from core.redis_client import get_from_cache, set_to_cache
+from slowapi import Limiter
+from slowapi.util import get_remote_address
 
 router = APIRouter()
 
+# Limiter objemizi bu dosya için de oluşturuyoruz
+limiter = Limiter(key_func=get_remote_address)
+
 @router.get("/years")
-def get_available_years():
+@limiter.limit("60/minute") # Dakikada maksimum 60 istek
+def get_available_years(request: Request):
     return {
         "status": "success",
         "available_years": [2018, 2019, 2020, 2021, 2022, 2023, 2024, 2025, 2026]
     }
 
 @router.get("/{race_year}/races")
-def get_races_by_year(race_year: int):
+@limiter.limit("60/minute")
+def get_races_by_year(request: Request, race_year: int):
     cache_key = f"schedule_races_{race_year}"
     cached_response = get_from_cache(cache_key)
     
@@ -43,7 +50,6 @@ def get_races_by_year(race_year: int):
             "races": race_list
         }
         
-        # Gelecek istekler için Redis'e yazıyoruz (24 saatlik süre verebiliriz veya sınırsız)
         set_to_cache(cache_key, final_response)
         return final_response
         
@@ -51,8 +57,8 @@ def get_races_by_year(race_year: int):
         raise HTTPException(status_code=400, detail=str(error_message))
 
 @router.get("/{race_year}/{race_name}/sessions")
-def get_sessions_by_race(race_year: int, race_name: str):
-    # Boşlukları alt çizgiye çevirerek güvenli bir cache key oluşturuyoruz (Örn: Abu Dhabi -> Abu_Dhabi)
+@limiter.limit("60/minute")
+def get_sessions_by_race(request: Request, race_year: int, race_name: str): # request: Request eklendi!
     safe_race_name = race_name.replace(" ", "_")
     cache_key = f"schedule_sessions_{race_year}_{safe_race_name}"
     
@@ -90,7 +96,8 @@ def get_sessions_by_race(race_year: int, race_name: str):
         raise HTTPException(status_code=400, detail=str(error_message))
 
 @router.get("/{race_year}/{race_name}/{session_type}/drivers")
-def get_drivers_by_session(race_year: int, race_name: str, session_type: str):
+@limiter.limit("60/minute")
+def get_drivers_by_session(request: Request, race_year: int, race_name: str, session_type: str): # request: Request eklendi!
     safe_race_name = race_name.replace(" ", "_")
     cache_key = f"schedule_drivers_{race_year}_{safe_race_name}_{session_type}"
     
