@@ -1,6 +1,7 @@
 from fastapi import FastAPI, HTTPException
 from services.f1_service import get_fastest_lap_telemetry
 from core.redis_client import get_from_cache, set_to_cache
+from routers import sessions
 
 app = FastAPI(title="Telemetria API", version="0.1.0")
 
@@ -41,5 +42,8 @@ def get_telemetry(race_year: int, race_name: str, session_type: str, driver_code
     
     # 4. Yanıtı gelecekteki istekler için Redis'e yaz
     set_to_cache(cache_key, final_response)
+ 
     
     return final_response
+
+app.include_router(sessions.router, prefix="/api/v1/schedule", tags=["Schedule"])
