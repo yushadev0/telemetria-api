@@ -51,13 +51,9 @@ The API is divided into two main categories: Core Telemetry and Schedule Helpers
 
 ### 2. Schedule & Helpers
 - `GET /api/v1/schedule/years`: Returns reliably supported years (2018+).
-<br>
-- `GET /api/v1/schedule/{race_year}/races`: Returns a list of official GP events for a given year.
-<br>
+- ` GET /api/v1/schedule/{race_year}/races `: Returns a list of official GP events for a given year.
 - `GET /api/v1/schedule/{race_year}/{race_name}/sessions`: Returns available sessions (e.g., FP1, FP2, Q, Race) for a specific event.
-<br>
 - `GET /api/v1/schedule/{race_year}/{race_name}/sessions`: Returns available sessions (e.g., FP1, FP2, Q, Race) for a specific event.
-<br>
 - `GET /api/v1/schedule/{race_year}/{race_name}/{session_type}/drivers`: Returns a list of drivers, including their abbreviations and hex team colors, who participated in a specific session.
 
 ---
