@@ -18,11 +18,13 @@ TRACK_DATA = {
     "Jeddah": {"name": "Jeddah Corniche Circuit", "file": "Cidde_GP.png"},
     "Baku": {"name": "Baku City Circuit", "file": "Baku_GP.png"},
     "Miami": {"name": "Miami International Autodrome", "file": "Miami_GP.png"},
+    "Miami Gardens": {"name": "Miami International Autodrome", "file": "Miami_GP.png"},
     "Imola": {"name": "Autodromo Enzo e Dino Ferrari", "file": "Imola_GP.png"},
     "Monaco": {"name": "Circuit de Monaco", "file": "Monaco_GP.png"},
     "Barcelona": {"name": "Circuit de Barcelona-Catalunya", "file": "Barcelona_GP.png"},
     "Montmeló": {"name": "Circuit de Barcelona-Catalunya", "file": "Barcelona_GP.png"},
     "Montreal": {"name": "Circuit Gilles-Villeneuve", "file": "Kanada_GP.png"},
+    "Montréal": {"name": "Circuit Gilles-Villeneuve", "file": "Kanada_GP.png"},
     "Spielberg": {"name": "Red Bull Ring", "file": "Avusturya_GP.png"},
     "Silverstone": {"name": "Silverstone Circuit", "file": "Silverstone_GP.png"},
     "Budapest": {"name": "Hungaroring", "file": "Hungaroring_GP.png"},
@@ -35,7 +37,8 @@ TRACK_DATA = {
     "Lusail": {"name": "Lusail International Circuit", "file": "Katar_GP.png"},
     "Austin": {"name": "Circuit of the Americas", "file": "COTA_GP.png"},
     "Mexico City": {"name": "Autódromo Hermanos Rodríguez", "file": "Meksika_GP.png"},
-    "São Paulo": {"name": "Autódromo José Carlos Pace", "file": "Brezilya_GP.png"},
+    "São Paulo": {"name": "Autódromo José Carlos Pace", "file": "Brezilya_GP.png"}, 
+    "Sao Paulo": {"name": "Autódromo José Carlos Pace", "file": "Brezilya_GP.png"},
     "Las Vegas": {"name": "Las Vegas Strip Circuit", "file": "Vegas_GP.png"},
     "Yas Island": {"name": "Yas Marina Circuit", "file": "AbuDabi_GP.png"},
     "Abu Dhabi": {"name": "Yas Marina Circuit", "file": "AbuDabi_GP.png"},
@@ -75,7 +78,7 @@ def get_races_by_year(request: Request, race_year: int):
         
         race_list = []
         for index, row in official_events.iterrows():
-            loc = row["Location"]
+            loc = str(row["Location"]).strip()
             
             # Sözlükten pisti bul, bulamazsan güvenlik için varsayılan bir değer ata
             track_info = TRACK_DATA.get(loc, {"name": f"{loc} Circuit", "file": "track_placeholder.png"})
