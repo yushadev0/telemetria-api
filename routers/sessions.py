@@ -65,7 +65,7 @@ def get_available_years(request: Request):
 @router.get("/{race_year}/races")
 @limiter.limit("60/minute")
 def get_races_by_year(request: Request, race_year: int):
-    cache_key = f"schedule_races_v2{race_year}"
+    cache_key = f"schedule_races_v3{race_year}"
     cached_response = get_from_cache(cache_key)
     
     if cached_response:
