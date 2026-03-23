@@ -10,8 +10,49 @@ router = APIRouter()
 # Limiter objemizi bu dosya için de oluşturuyoruz
 limiter = Limiter(key_func=get_remote_address)
 
+# --- HARİKA DOKUNUŞ: PİST VE GÖRSEL SÖZLÜĞÜ ---
+# FastF1'in 'Location' verisini yakalayıp, gerçek pist adını ve senin PNG'lerini eşleştirir
+TRACK_DATA = {
+    "Melbourne": {"name": "Albert Park Circuit", "file": "Avustralya_GP.png"},
+    "Sakhir": {"name": "Bahrain International Circuit", "file": "Bahreyn_GP.png"},
+    "Jeddah": {"name": "Jeddah Corniche Circuit", "file": "Cidde_GP.png"},
+    "Baku": {"name": "Baku City Circuit", "file": "Baku_GP.png"},
+    "Miami": {"name": "Miami International Autodrome", "file": "Miami_GP.png"},
+    "Imola": {"name": "Autodromo Enzo e Dino Ferrari", "file": "Imola_GP.png"},
+    "Monaco": {"name": "Circuit de Monaco", "file": "Monaco_GP.png"},
+    "Barcelona": {"name": "Circuit de Barcelona-Catalunya", "file": "Barcelona_GP.png"},
+    "Montmeló": {"name": "Circuit de Barcelona-Catalunya", "file": "Barcelona_GP.png"},
+    "Montreal": {"name": "Circuit Gilles-Villeneuve", "file": "Kanada_GP.png"},
+    "Spielberg": {"name": "Red Bull Ring", "file": "Avusturya_GP.png"},
+    "Silverstone": {"name": "Silverstone Circuit", "file": "Silverstone_GP.png"},
+    "Budapest": {"name": "Hungaroring", "file": "Hungaroring_GP.png"},
+    "Spa-Francorchamps": {"name": "Circuit de Spa-Francorchamps", "file": "Spa_GP.png"},
+    "Zandvoort": {"name": "Circuit Zandvoort", "file": "Zandvoort_GP.png"},
+    "Monza": {"name": "Autodromo Nazionale Monza", "file": "Monza_GP.png"},
+    "Marina Bay": {"name": "Marina Bay Street Circuit", "file": "Singapur_GP.png"},
+    "Singapore": {"name": "Marina Bay Street Circuit", "file": "Singapur_GP.png"},
+    "Suzuka": {"name": "Suzuka International Racing Course", "file": "Japonya_GP.png"},
+    "Lusail": {"name": "Lusail International Circuit", "file": "Katar_GP.png"},
+    "Austin": {"name": "Circuit of the Americas", "file": "COTA_GP.png"},
+    "Mexico City": {"name": "Autódromo Hermanos Rodríguez", "file": "Meksika_GP.png"},
+    "São Paulo": {"name": "Autódromo José Carlos Pace", "file": "Brezilya_GP.png"},
+    "Las Vegas": {"name": "Las Vegas Strip Circuit", "file": "Vegas_GP.png"},
+    "Yas Island": {"name": "Yas Marina Circuit", "file": "AbuDabi_GP.png"},
+    "Abu Dhabi": {"name": "Yas Marina Circuit", "file": "AbuDabi_GP.png"},
+    "Shanghai": {"name": "Shanghai International Circuit", "file": "Cin_GP.png"},
+    "Istanbul": {"name": "Istanbul Park", "file": "Istanbul_GP.png"},
+    "Hockenheim": {"name": "Hockenheimring", "file": "Hockenheim_GP.png"},
+    "Nürburg": {"name": "Nürburgring", "file": "Nurburgring_GP.png"},
+    "Portimão": {"name": "Algarve International Circuit", "file": "Portekiz_GP.png"},
+    "Mugello": {"name": "Autodromo Internazionale del Mugello", "file": "Mugello_GP.png"},
+    "Sochi": {"name": "Sochi Autodrom", "file": "Rusya_GP.png"},
+    "Madrid": {"name": "IFEMA Madrid", "file": "Madrid_GP.png"},
+    "Le Castellet": {"name": "Circuit Paul Ricard", "file": "Fransiz_GP.png"}
+}
+
+
 @router.get("/years")
-@limiter.limit("60/minute") # Dakikada maksimum 60 istek
+@limiter.limit("60/minute") 
 def get_available_years(request: Request):
     return {
         "status": "success",
@@ -34,12 +75,19 @@ def get_races_by_year(request: Request, race_year: int):
         
         race_list = []
         for index, row in official_events.iterrows():
+            loc = row["Location"]
+            
+            # Sözlükten pisti bul, bulamazsan güvenlik için varsayılan bir değer ata
+            track_info = TRACK_DATA.get(loc, {"name": f"{loc} Circuit", "file": "track_placeholder.png"})
+            
             race_list.append({
                 "round_number": row["RoundNumber"],
                 "country": row["Country"],
                 "location": row["Location"],
                 "event_name": row["EventName"],
-                "event_date": str(row["EventDate"].date())
+                "event_date": str(row["EventDate"].date()),
+                "track_name": track_info["name"],  # YENİ EKLENDİ (Örn: Suzuka International Racing Course)
+                "track_image": f"https://hasup.net/assets/tracks/{track_info['file']}" # YENİ EKLENDİ
             })
             
         final_response = {
@@ -56,9 +104,10 @@ def get_races_by_year(request: Request, race_year: int):
     except Exception as error_message:
         raise HTTPException(status_code=400, detail=str(error_message))
 
+
 @router.get("/{race_year}/{race_name}/sessions")
 @limiter.limit("60/minute")
-def get_sessions_by_race(request: Request, race_year: int, race_name: str): # request: Request eklendi!
+def get_sessions_by_race(request: Request, race_year: int, race_name: str):
     safe_race_name = race_name.replace(" ", "_")
     cache_key = f"schedule_sessions_{race_year}_{safe_race_name}"
     
@@ -95,9 +144,10 @@ def get_sessions_by_race(request: Request, race_year: int, race_name: str): # re
     except Exception as error_message:
         raise HTTPException(status_code=400, detail=str(error_message))
 
+
 @router.get("/{race_year}/{race_name}/{session_type}/drivers")
 @limiter.limit("60/minute")
-def get_drivers_by_session(request: Request, race_year: int, race_name: str, session_type: str): # request: Request eklendi!
+def get_drivers_by_session(request: Request, race_year: int, race_name: str, session_type: str):
     safe_race_name = race_name.replace(" ", "_")
     cache_key = f"schedule_drivers_{race_year}_{safe_race_name}_{session_type}"
     
