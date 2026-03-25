@@ -88,7 +88,7 @@ app.include_router(sessions.router, prefix="/api/v1/schedule", tags=["Schedule"]
 @limiter.limit("40/minute")
 def get_laps_summary(request: Request, race_year: int, race_name: str, session_type: str, driver_code: str):
     
-    cache_key = f"laps_summary_{race_year}_{race_name}_{session_type}_{driver_code}"
+    cache_key = f"laps_summary_v2{race_year}_{race_name}_{session_type}_{driver_code}"
     
     cached_response = get_from_cache(cache_key)
     if cached_response:
