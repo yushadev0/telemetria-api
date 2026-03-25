@@ -84,16 +84,18 @@ def get_comparison_telemetry(race_year: int, race_name: str, session_type: str, 
         dist2 = tel2['Distance'].values
         
         # FIXED DISTANCE DOWNSAMPLING
-        # Kesişen maksimum mesafeyi bul ve her 5 metrede bir ölçüm ekseni oluştur
         max_distance = min(np.max(dist1), np.max(dist2))
         fixed_distances = np.arange(0, max_distance, 5)
         
-        # Pilot 1 Numpy Interpolasyonu (Veriyi yeni eksene oturtma)
+        # Pilot 1 Numpy Interpolasyonu
         d1_time = np.interp(fixed_distances, dist1, time1)
         d1_speed = np.interp(fixed_distances, dist1, tel1['Speed'].values)
         d1_throttle = np.interp(fixed_distances, dist1, tel1['Throttle'].values)
         d1_brake = np.interp(fixed_distances, dist1, tel1['Brake'].values)
         d1_gear = np.interp(fixed_distances, dist1, tel1['nGear'].values)
+        # YENİ: X ve Y Koordinatları (Harita için)
+        d1_x = np.interp(fixed_distances, dist1, tel1['X'].values)
+        d1_y = np.interp(fixed_distances, dist1, tel1['Y'].values)
         
         # Pilot 2 Numpy Interpolasyonu
         d2_time = np.interp(fixed_distances, dist2, time2)
@@ -101,11 +103,14 @@ def get_comparison_telemetry(race_year: int, race_name: str, session_type: str, 
         d2_throttle = np.interp(fixed_distances, dist2, tel2['Throttle'].values)
         d2_brake = np.interp(fixed_distances, dist2, tel2['Brake'].values)
         d2_gear = np.interp(fixed_distances, dist2, tel2['nGear'].values)
+        # YENİ: X ve Y Koordinatları (Harita için)
+        d2_x = np.interp(fixed_distances, dist2, tel2['X'].values)
+        d2_y = np.interp(fixed_distances, dist2, tel2['Y'].values)
         
         # DELTA HESAPLAMASI: Pilot 1'e göre Pilot 2'nin zaman farkı
         delta_time = d1_time - d2_time
 
-        # NaN verileri numpy ile sıfırlayıp liste olarak JSON'a hazırlıyoruz
+        # GÜNCELLENDİ: Harita verileri de eklendi
         return {
             "fixed_distance": fixed_distances.tolist(),
             "delta_time": np.nan_to_num(delta_time).tolist(),
@@ -115,7 +120,9 @@ def get_comparison_telemetry(race_year: int, race_name: str, session_type: str, 
                 "speed": np.nan_to_num(d1_speed).tolist(),
                 "throttle": np.nan_to_num(d1_throttle).tolist(),
                 "brake": np.nan_to_num(d1_brake).tolist(),
-                "n_gear": np.round(np.nan_to_num(d1_gear)).tolist()
+                "n_gear": np.round(np.nan_to_num(d1_gear)).tolist(),
+                "x": np.nan_to_num(d1_x).tolist(),
+                "y": np.nan_to_num(d1_y).tolist()
             },
             "driver2": {
                 "code": driver2,
@@ -123,7 +130,9 @@ def get_comparison_telemetry(race_year: int, race_name: str, session_type: str, 
                 "speed": np.nan_to_num(d2_speed).tolist(),
                 "throttle": np.nan_to_num(d2_throttle).tolist(),
                 "brake": np.nan_to_num(d2_brake).tolist(),
-                "n_gear": np.round(np.nan_to_num(d2_gear)).tolist()
+                "n_gear": np.round(np.nan_to_num(d2_gear)).tolist(),
+                "x": np.nan_to_num(d2_x).tolist(),
+                "y": np.nan_to_num(d2_y).tolist()
             }
         }
     except Exception as e:
