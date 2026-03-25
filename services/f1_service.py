@@ -131,31 +131,71 @@ def get_comparison_telemetry(race_year: int, race_name: str, session_type: str, 
     
 def get_driver_laps_summary(race_year: int, race_name: str, session_type: str, driver_code: str):
     """
-    Pilotun o seanstaki tüm turlarının özetini, sektör zamanlarını ve lastik bilgisini getirir.
-    telemetry=False olduğu için inanılmaz hızlı çalışır.
+    Pilotun o seanstaki tüm turlarının özetini getirirken, 
+    Gerçek F1 kurallarına göre Sektör Renklerini (Mor, Yeşil, Sarı) hesaplar.
     """
     try:
         f1_session = fastf1.get_session(race_year, race_name, session_type)
-        # SİHİR BURADA: telemetry=False dediğimiz için sadece tur tablolarını yükler, çok hızlıdır!
+        # Sadece tur verilerini indir (Aşırı hızlı çalışır)
         f1_session.load(telemetry=False, weather=False, messages=False)
 
-        driver_laps = f1_session.laps.pick_drivers(driver_code)
+        all_laps = f1_session.laps
+        
+        # 1. TÜM SEANSIN EN HIZLI SEKTÖRLERİNİ BUL (Mor 🟣 İçin)
+        session_best_s1 = all_laps['Sector1Time'].min()
+        session_best_s2 = all_laps['Sector2Time'].min()
+        session_best_s3 = all_laps['Sector3Time'].min()
+
+        # 2. SADECE SEÇİLİ PİLOTUN TURLARINI AL
+        driver_laps = all_laps.pick_drivers(driver_code)
+        
+        # 3. PİLOTUN KENDİ EN İYİ SEKTÖRLERİNİ BUL (Yeşil 🟢 İçin)
+        personal_best_s1 = driver_laps['Sector1Time'].min()
+        personal_best_s2 = driver_laps['Sector2Time'].min()
+        personal_best_s3 = driver_laps['Sector3Time'].min()
         
         laps_data = []
         for _, row in driver_laps.iterrows():
-            # Geçersiz/Silinmiş turları (LapTime NaN olanları) filtreleyebiliriz ama pite giriş çıkışları
-            # görmek için null (None) olarak göndermek UI tarafında daha değerlidir.
             
+            # --- SEKTÖR RENKLERİNİ HESAPLAMA ---
+            s1_val = row['Sector1Time']
+            s2_val = row['Sector2Time']
+            s3_val = row['Sector3Time']
+            
+            s1_color = "yellow"
+            s2_color = "yellow"
+            s3_color = "yellow"
+
+            if pd.notna(s1_val):
+                if s1_val == session_best_s1: s1_color = "purple"
+                elif s1_val == personal_best_s1: s1_color = "green"
+
+            if pd.notna(s2_val):
+                if s2_val == session_best_s2: s2_color = "purple"
+                elif s2_val == personal_best_s2: s2_color = "green"
+
+            if pd.notna(s3_val):
+                if s3_val == session_best_s3: s3_color = "purple"
+                elif s3_val == personal_best_s3: s3_color = "green"
+
+            # Verileri listeye ekle
             laps_data.append({
                 "lap_number": int(row['LapNumber']) if pd.notna(row['LapNumber']) else None,
                 "lap_time": row['LapTime'].total_seconds() if pd.notna(row['LapTime']) else None,
-                "sector_1": row['Sector1Time'].total_seconds() if pd.notna(row['Sector1Time']) else None,
-                "sector_2": row['Sector2Time'].total_seconds() if pd.notna(row['Sector2Time']) else None,
-                "sector_3": row['Sector3Time'].total_seconds() if pd.notna(row['Sector3Time']) else None,
+                
+                # UI'da göstermek için saniye cinsinden değerleri
+                "sector_1": s1_val.total_seconds() if pd.notna(s1_val) else None,
+                "sector_2": s2_val.total_seconds() if pd.notna(s2_val) else None,
+                "sector_3": s3_val.total_seconds() if pd.notna(s3_val) else None,
+                
+                # API'den direkt CSS sınıflarını (yellow, green, purple) yolluyoruz!
+                "s1_color": s1_color,
+                "s2_color": s2_color,
+                "s3_color": s3_color,
+                
                 "compound": str(row['Compound']) if pd.notna(row['Compound']) else "UNKNOWN",
                 "tyre_life": int(row['TyreLife']) if pd.notna(row['TyreLife']) else None,
                 "is_personal_best": bool(row['IsPersonalBest']) if pd.notna(row['IsPersonalBest']) else False,
-                # Pite girilen veya pitten çıkılan turları UI'da ikonla göstermek için:
                 "is_pit_out": True if pd.notna(row['PitOutTime']) else False,
                 "is_pit_in": True if pd.notna(row['PitInTime']) else False
             })
