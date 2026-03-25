@@ -56,7 +56,7 @@ def get_telemetry(request: Request, race_year: int, race_name: str, session_type
 def get_compare(request: Request, race_year: int, race_name: str, session_type: str, driver1: str, driver2: str, lap: str = "fastest"):
     
     # Karşılaştırma için özel cache key (Sıralama fark etmesin diye alfabetik dizebilirsin ama şimdilik doğrudan alıyoruz)
-    cache_key = f"compare_v2{race_year}_{race_name}_{session_type}_{driver1}_{driver2}_{lap}"
+    cache_key = f"compare_v3{race_year}_{race_name}_{session_type}_{driver1}_{driver2}_{lap}"
     
     cached_response = get_from_cache(cache_key)
     if cached_response:

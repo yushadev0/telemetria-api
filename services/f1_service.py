@@ -110,6 +110,24 @@ def get_comparison_telemetry(race_year: int, race_name: str, session_type: str, 
         # DELTA HESAPLAMASI: Pilot 1'e göre Pilot 2'nin zaman farkı
         delta_time = d1_time - d2_time
 
+
+        laps_overview = []
+        max_lap = int(max(laps_d1['LapNumber'].max() if not laps_d1.empty else 0, laps_d2['LapNumber'].max() if not laps_d2.empty else 0))
+        for ln in range(1, max_lap + 1):
+            row1 = laps_d1[laps_d1['LapNumber'] == ln]
+            row2 = laps_d2[laps_d2['LapNumber'] == ln]
+            
+            c1 = str(row1.iloc[0]['Compound']) if not row1.empty and pd.notna(row1.iloc[0]['Compound']) else "UNKNOWN"
+            c2 = str(row2.iloc[0]['Compound']) if not row2.empty and pd.notna(row2.iloc[0]['Compound']) else "UNKNOWN"
+            
+            lt1 = row1.iloc[0]['LapTime'].total_seconds() if not row1.empty and pd.notna(row1.iloc[0]['LapTime']) else None
+            lt2 = row2.iloc[0]['LapTime'].total_seconds() if not row2.empty and pd.notna(row2.iloc[0]['LapTime']) else None
+
+            laps_overview.append({
+                "lap_number": ln, "d1_compound": c1, "d2_compound": c2,
+                "d1_lap_time": lt1, "d2_lap_time": lt2
+            })
+
         # GÜNCELLENDİ: Harita verileri de eklendi
         return {
             "fixed_distance": fixed_distances.tolist(),
@@ -122,7 +140,9 @@ def get_comparison_telemetry(race_year: int, race_name: str, session_type: str, 
                 "brake": np.nan_to_num(d1_brake).tolist(),
                 "n_gear": np.round(np.nan_to_num(d1_gear)).tolist(),
                 "x": np.nan_to_num(d1_x).tolist(),
-                "y": np.nan_to_num(d1_y).tolist()
+                "y": np.nan_to_num(d1_y).tolist(),
+                "compound": str(lap1['Compound']) if pd.notna(lap1['Compound']) else "UNKNOWN",
+                "tyre_life": int(lap1['TyreLife']) if pd.notna(lap1['TyreLife']) else None
             },
             "driver2": {
                 "code": driver2,
@@ -132,7 +152,9 @@ def get_comparison_telemetry(race_year: int, race_name: str, session_type: str, 
                 "brake": np.nan_to_num(d2_brake).tolist(),
                 "n_gear": np.round(np.nan_to_num(d2_gear)).tolist(),
                 "x": np.nan_to_num(d2_x).tolist(),
-                "y": np.nan_to_num(d2_y).tolist()
+                "y": np.nan_to_num(d2_y).tolist(),
+                "compound": str(lap2['Compound']) if pd.notna(lap2['Compound']) else "UNKNOWN",
+                "tyre_life": int(lap2['TyreLife']) if pd.notna(lap2['TyreLife']) else None
             }
         }
     except Exception as e:
