@@ -128,3 +128,39 @@ def get_comparison_telemetry(race_year: int, race_name: str, session_type: str, 
         }
     except Exception as e:
         return {"error_message": str(e)}
+    
+def get_driver_laps_summary(race_year: int, race_name: str, session_type: str, driver_code: str):
+    """
+    Pilotun o seanstaki tüm turlarının özetini, sektör zamanlarını ve lastik bilgisini getirir.
+    telemetry=False olduğu için inanılmaz hızlı çalışır.
+    """
+    try:
+        f1_session = fastf1.get_session(race_year, race_name, session_type)
+        # SİHİR BURADA: telemetry=False dediğimiz için sadece tur tablolarını yükler, çok hızlıdır!
+        f1_session.load(telemetry=False, weather=False, messages=False)
+
+        driver_laps = f1_session.laps.pick_drivers(driver_code)
+        
+        laps_data = []
+        for _, row in driver_laps.iterrows():
+            # Geçersiz/Silinmiş turları (LapTime NaN olanları) filtreleyebiliriz ama pite giriş çıkışları
+            # görmek için null (None) olarak göndermek UI tarafında daha değerlidir.
+            
+            laps_data.append({
+                "lap_number": int(row['LapNumber']) if pd.notna(row['LapNumber']) else None,
+                "lap_time": row['LapTime'].total_seconds() if pd.notna(row['LapTime']) else None,
+                "sector_1": row['Sector1Time'].total_seconds() if pd.notna(row['Sector1Time']) else None,
+                "sector_2": row['Sector2Time'].total_seconds() if pd.notna(row['Sector2Time']) else None,
+                "sector_3": row['Sector3Time'].total_seconds() if pd.notna(row['Sector3Time']) else None,
+                "compound": str(row['Compound']) if pd.notna(row['Compound']) else "UNKNOWN",
+                "tyre_life": int(row['TyreLife']) if pd.notna(row['TyreLife']) else None,
+                "is_personal_best": bool(row['IsPersonalBest']) if pd.notna(row['IsPersonalBest']) else False,
+                # Pite girilen veya pitten çıkılan turları UI'da ikonla göstermek için:
+                "is_pit_out": True if pd.notna(row['PitOutTime']) else False,
+                "is_pit_in": True if pd.notna(row['PitInTime']) else False
+            })
+
+        return {"laps": laps_data}
+
+    except Exception as e:
+        return {"error_message": str(e)}

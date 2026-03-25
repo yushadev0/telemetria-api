@@ -1,5 +1,5 @@
 from fastapi import FastAPI, HTTPException, Request
-from services.f1_service import get_lap_telemetry, get_comparison_telemetry
+from services.f1_service import get_lap_telemetry, get_comparison_telemetry, get_driver_laps_summary
 from core.redis_client import get_from_cache, set_to_cache
 from routers import sessions
 from slowapi import Limiter, _rate_limit_exceeded_handler
@@ -82,3 +82,34 @@ def get_compare(request: Request, race_year: int, race_name: str, session_type: 
 
 # Yardımcı takvim uç noktaları
 app.include_router(sessions.router, prefix="/api/v1/schedule", tags=["Schedule"])
+
+# 3. PİLOTUN TÜM TURLARI VE SEKTÖR ZAMANLARI (Lap Summary)
+@app.get("/api/v1/laps/{race_year}/{race_name}/{session_type}/{driver_code}")
+@limiter.limit("40/minute")
+def get_laps_summary(request: Request, race_year: int, race_name: str, session_type: str, driver_code: str):
+    
+    cache_key = f"laps_summary_{race_year}_{race_name}_{session_type}_{driver_code}"
+    
+    cached_response = get_from_cache(cache_key)
+    if cached_response:
+        cached_response["cache"] = "hit"
+        return cached_response
+
+    # Servisten hafifletilmiş tur verisini çek
+    laps_response = get_driver_laps_summary(race_year, race_name, session_type, driver_code)
+
+    if isinstance(laps_response, dict) and "error_message" in laps_response:
+        raise HTTPException(status_code=400, detail=laps_response["error_message"])
+
+    final_response = {
+        "status": "success",
+        "cache": "miss",
+        "driver_code": driver_code,
+        "track_name": race_name,
+        "session_type": session_type,
+        "total_laps": len(laps_response.get("laps", [])),
+        "laps_data": laps_response["laps"]
+    }
+
+    set_to_cache(cache_key, final_response)
+    return final_response
