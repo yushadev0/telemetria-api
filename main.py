@@ -40,7 +40,7 @@ sock.setblocking(False) # Kilitlenmeyi önler
 
 # Arka planda güvenli (Non-Blocking) UDP dinleyici motoru
 async def udp_listener():
-    print(f"🚀 Assetto Corsa UDP Köprüsü {UDP_PORT} portunda açıldı!")
+    print(f"Assetto Corsa UDP Köprüsü {UDP_PORT} portunda açıldı!")
     while True:
         try:
             # YENİ: Windows'ta loop'u dondurmamak için standart recvfrom kullanıp hatayı yakalıyoruz
@@ -64,7 +64,7 @@ async def udp_listener():
             # Eğer o an UDP paketi yoksa, ana motoru kilitlememek için 10 milisaniye nefes al
             await asyncio.sleep(0.01)
         except Exception as e:
-            print(f"⚠️ UDP Okuma Hatası: {e}")
+            print(f"UDP Okuma Hatası: {e}")
             await asyncio.sleep(1)
 
 @app.on_event("startup")
@@ -75,7 +75,7 @@ async def startup_event():
 async def websocket_endpoint(websocket: WebSocket):
     await websocket.accept()
     active_connections.append(websocket)
-    print("🟢 Yeni bir Yarış Mühendisi canlı ekrana bağlandı!")
+    print("Yeni bir Yarış Mühendisi canlı ekrana bağlandı!")
     try:
         while True:
             # Tarayıcıdan ping gelirse diye bekle
@@ -83,7 +83,7 @@ async def websocket_endpoint(websocket: WebSocket):
     except WebSocketDisconnect:
         if websocket in active_connections:
             active_connections.remove(websocket)
-        print("🔴 Bir Mühendis bağlantıdan koptu.")
+        print("Bir Mühendis bağlantıdan koptu.")
     except Exception:
         pass
 # ====================================================================
