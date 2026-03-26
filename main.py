@@ -26,66 +26,80 @@ app.add_middleware(
 )
 
 # ====================================================================
-# BÖLÜM 1: ASSETTO CORSA CANLI PİT DUVARI (UDP & WEBSOCKET)
+# BÖLÜM 1: ASSETTO CORSA CANLI PİT DUVARI (MULTI-ROOM MİMARİSİ)
 # ====================================================================
 
-active_connections = [] # Canlı paneli izleyen mühendislerin listesi
+# Artık tek bir liste değil, Oda Kodlarına göre ayrılmış Sözlük (Dictionary) kullanıyoruz
+# Örnek: { "HAMILTON44": [websocket1, websocket2], "VERSTAPPEN33": [websocket3] }
+active_rooms = {} 
 
-# 4433 UDP Roket Alıcısı
 UDP_IP = "0.0.0.0"
 UDP_PORT = 4433
 sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 sock.bind((UDP_IP, UDP_PORT))
-sock.setblocking(False) # Kilitlenmeyi önler
+sock.setblocking(False)
 
-# Arka planda güvenli (Non-Blocking) UDP dinleyici motoru
 async def udp_listener():
-    print(f"Assetto Corsa UDP Köprüsü {UDP_PORT} portunda açıldı!")
+    print(f"[BASARILI] Assetto Corsa UDP Koprusu {UDP_PORT} portunda coklu oda destegiyle acildi!")
+    loop = asyncio.get_event_loop()
     while True:
         try:
-            # YENİ: Windows'ta loop'u dondurmamak için standart recvfrom kullanıp hatayı yakalıyoruz
             data, addr = sock.recvfrom(4096)
             telemetry_str = data.decode('utf-8')
             
-            # Veriyi mühendislere fırlat ve kopanları anında temizle
-            dead_connections = []
-            for connection in active_connections:
-                try:
-                    await connection.send_text(telemetry_str)
-                except Exception:
-                    dead_connections.append(connection)
+            # Gelen UDP paketini JSON olarak oku ve Oda Kodunu ('room') bul
+            telemetry_data = json.loads(telemetry_str)
+            room_id = telemetry_data.get("room")
             
-            # Ölü bağlantıları listeden sil ki sunucu çökmesin
-            for c in dead_connections:
-                if c in active_connections:
-                    active_connections.remove(c)
-                    
+            # Eğer geçerli bir oda kodu varsa ve o odada bekleyen mühendis varsa veriyi dağıt
+            if room_id and room_id in active_rooms:
+                dead_connections = []
+                for connection in active_rooms[room_id]:
+                    try:
+                        await connection.send_text(telemetry_str)
+                    except Exception:
+                        dead_connections.append(connection)
+                
+                for c in dead_connections:
+                    if c in active_rooms[room_id]:
+                        active_rooms[room_id].remove(c)
+                        
         except BlockingIOError:
-            # Eğer o an UDP paketi yoksa, ana motoru kilitlememek için 10 milisaniye nefes al
             await asyncio.sleep(0.01)
+        except json.JSONDecodeError:
+            pass # Hatalı paket gelirse sunucu çökmesin diye yoksay
         except Exception as e:
-            print(f"UDP Okuma Hatası: {e}")
-            await asyncio.sleep(1)
+            await asyncio.sleep(0.01)
 
 @app.on_event("startup")
 async def startup_event():
     asyncio.create_task(udp_listener())
 
-@app.websocket("/ws/live")
-async def websocket_endpoint(websocket: WebSocket):
+# DİKKAT: Uç noktamıza {room_id} değişkeni eklendi!
+@app.websocket("/ws/live/{room_id}")
+async def websocket_endpoint(websocket: WebSocket, room_id: str):
     await websocket.accept()
-    active_connections.append(websocket)
-    print("Yeni bir Yarış Mühendisi canlı ekrana bağlandı!")
+    
+    # Oda daha önce açılmadıysa yeni liste oluştur
+    if room_id not in active_rooms:
+        active_rooms[room_id] = []
+        
+    active_rooms[room_id].append(websocket)
+    print(f"[BAGLANDI] Yeni bir Yaris Muhendisi '{room_id}' odasina baglandi!")
+    
     try:
         while True:
-            # Tarayıcıdan ping gelirse diye bekle
             await websocket.receive_text() 
     except WebSocketDisconnect:
-        if websocket in active_connections:
-            active_connections.remove(websocket)
-        print("Bir Mühendis bağlantıdan koptu.")
+        if websocket in active_rooms[room_id]:
+            active_rooms[room_id].remove(websocket)
+        # Eğer odada kimse kalmadıysa odayı silip RAM'i temizle
+        if len(active_rooms[room_id]) == 0:
+            del active_rooms[room_id]
+        print(f"[KOPTU] Bir Muhendis '{room_id}' odasindan ayrildi.")
     except Exception:
         pass
+    
 # ====================================================================
 # BÖLÜM 2: FORMULA 1 GEÇMİŞ VERİ (REST API)
 # ====================================================================
