@@ -32,7 +32,7 @@ app.add_middleware(
 active_connections = [] # Canlı paneli izleyen mühendislerin listesi
 
 # 4433 UDP Roket Alıcısı
-UDP_IP = "127.0.0.1"
+UDP_IP = "0.0.0.0"
 UDP_PORT = 4433
 sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 sock.bind((UDP_IP, UDP_PORT))
