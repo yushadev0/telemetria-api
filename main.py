@@ -36,34 +36,41 @@ UDP_IP = "0.0.0.0"
 UDP_PORT = 4433
 sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 sock.bind((UDP_IP, UDP_PORT))
-sock.setblocking(False) # Asenkron çalışması için kilitlenmeyi kapatıyoruz
+sock.setblocking(False) # Kilitlenmeyi önler
 
-# Arka planda Delphi'den gelen UDP paketlerini dinleyen motor
+# Arka planda güvenli (Non-Blocking) UDP dinleyici motoru
 async def udp_listener():
-    loop = asyncio.get_event_loop()
     print(f"🚀 Assetto Corsa UDP Köprüsü {UDP_PORT} portunda açıldı!")
     while True:
         try:
-            # Delphi'den gelen veriyi yakala
-            data, addr = await loop.sock_recvfrom(sock, 4096)
+            # YENİ: Windows'ta loop'u dondurmamak için standart recvfrom kullanıp hatayı yakalıyoruz
+            data, addr = sock.recvfrom(4096)
             telemetry_str = data.decode('utf-8')
             
-            # Bağlı olan tüm mühendislere anında fırlat
+            # Veriyi mühendislere fırlat ve kopanları anında temizle
+            dead_connections = []
             for connection in active_connections:
-                await connection.send_text(telemetry_str)
-                
+                try:
+                    await connection.send_text(telemetry_str)
+                except Exception:
+                    dead_connections.append(connection)
+            
+            # Ölü bağlantıları listeden sil ki sunucu çökmesin
+            for c in dead_connections:
+                if c in active_connections:
+                    active_connections.remove(c)
+                    
         except BlockingIOError:
+            # Eğer o an UDP paketi yoksa, ana motoru kilitlememek için 10 milisaniye nefes al
             await asyncio.sleep(0.01)
         except Exception as e:
             print(f"⚠️ UDP Okuma Hatası: {e}")
             await asyncio.sleep(1)
 
-# FastAPI başlarken UDP dinleyicisini de arka planda ateşle
 @app.on_event("startup")
 async def startup_event():
     asyncio.create_task(udp_listener())
 
-# Mühendislerin bağlandığı Canlı Ekran (WebSocket) Uç Noktası
 @app.websocket("/ws/live")
 async def websocket_endpoint(websocket: WebSocket):
     await websocket.accept()
@@ -71,12 +78,14 @@ async def websocket_endpoint(websocket: WebSocket):
     print("🟢 Yeni bir Yarış Mühendisi canlı ekrana bağlandı!")
     try:
         while True:
-            await websocket.receive_text() # Bağlantıyı açık tutmak için ping/pong
+            # Tarayıcıdan ping gelirse diye bekle
+            await websocket.receive_text() 
     except WebSocketDisconnect:
-        active_connections.remove(websocket)
+        if websocket in active_connections:
+            active_connections.remove(websocket)
         print("🔴 Bir Mühendis bağlantıdan koptu.")
-
-
+    except Exception:
+        pass
 # ====================================================================
 # BÖLÜM 2: FORMULA 1 GEÇMİŞ VERİ (REST API)
 # ====================================================================
