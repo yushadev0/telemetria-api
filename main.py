@@ -10,6 +10,7 @@ from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
 import time
+import traceback
 
 # Rate Limiter'ı IP adresine göre başlatıyoruz
 limiter = Limiter(key_func=get_remote_address)
@@ -83,26 +84,34 @@ async def startup_event():
 @app.websocket("/ws/live/{room_id}")
 async def websocket_endpoint(websocket: WebSocket, room_id: str):
     await websocket.accept()
+    # YENİ: flush=True ile NSSM'in logları anında diske yazmasını zorluyoruz!
+    print(f"[WS]  ODA {room_id}: Istemci baglandi!", flush=True)
     
-    # Oda daha önce açılmadıysa yeni liste oluştur
     if room_id not in active_rooms:
         active_rooms[room_id] = []
         
     active_rooms[room_id].append(websocket)
-    print(f"[BAGLANDI] Yeni bir Yaris Muhendisi '{room_id}' odasina baglandi!")
     
     try:
         while True:
-            await websocket.receive_text() 
-    except WebSocketDisconnect:
-        if websocket in active_rooms[room_id]:
+            # Sadece dinlemiyoruz, tarayıcıdan gelen Ping'lere yanıt veriyoruz!
+            data = await websocket.receive_text()
+            if data == "PING":
+                await websocket.send_text('{"type": "PONG"}')
+                print(f"[WS] ODA {room_id}: Istemciden Ping alindi.", flush=True)
+                
+    except WebSocketDisconnect as e:
+        print(f"[WS]  ODA {room_id}: Istemci normal bir sekilde koptu. (Kod: {e.code})", flush=True)
+    except Exception as e:
+        # İŞTE BİZİ KURTARACAK SATIR BURASI! Çökerse sebebi buraya düşecek.
+        print(f"[WS]  ODA {room_id}: BEKLENMEYEN KOPMA HATASI! -> {str(e)}", flush=True)
+        traceback.print_exc() 
+    finally:
+        if room_id in active_rooms and websocket in active_rooms[room_id]:
             active_rooms[room_id].remove(websocket)
-        # Eğer odada kimse kalmadıysa odayı silip RAM'i temizle
-        if len(active_rooms[room_id]) == 0:
+        if room_id in active_rooms and len(active_rooms[room_id]) == 0:
             del active_rooms[room_id]
-        print(f"[KOPTU] Bir Muhendis '{room_id}' odasindan ayrildi.")
-    except Exception:
-        pass
+        print(f"[WS] ODA {room_id}: Baglanti tamamen temizlendi.", flush=True)
 
 
 @app.get("/api/v1/active-rooms")
