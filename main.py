@@ -9,6 +9,7 @@ from routers import sessions
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
+import time
 
 # Rate Limiter'ı IP adresine göre başlatıyoruz
 limiter = Limiter(key_func=get_remote_address)
@@ -31,7 +32,8 @@ app.add_middleware(
 
 # Artık tek bir liste değil, Oda Kodlarına göre ayrılmış Sözlük (Dictionary) kullanıyoruz
 # Örnek: { "HAMILTON44": [websocket1, websocket2], "VERSTAPPEN33": [websocket3] }
-active_rooms = {} 
+active_rooms = {}
+active_streams = {} 
 
 UDP_IP = "0.0.0.0"
 UDP_PORT = 4433
@@ -47,27 +49,29 @@ async def udp_listener():
             data, addr = sock.recvfrom(4096)
             telemetry_str = data.decode('utf-8')
             
-            # Gelen UDP paketini JSON olarak oku ve Oda Kodunu ('room') bul
             telemetry_data = json.loads(telemetry_str)
             room_id = telemetry_data.get("room")
             
-            # Eğer geçerli bir oda kodu varsa ve o odada bekleyen mühendis varsa veriyi dağıt
-            if room_id and room_id in active_rooms:
-                dead_connections = []
-                for connection in active_rooms[room_id]:
-                    try:
-                        await connection.send_text(telemetry_str)
-                    except Exception:
-                        dead_connections.append(connection)
+            if room_id:
+                # 🧠 YENİ: Odanın canlı olduğunu ve son veri gelme zamanını kaydet!
+                active_streams[room_id] = time.time()
                 
-                for c in dead_connections:
-                    if c in active_rooms[room_id]:
-                        active_rooms[room_id].remove(c)
+                if room_id in active_rooms:
+                    dead_connections = []
+                    for connection in active_rooms[room_id]:
+                        try:
+                            await connection.send_text(telemetry_str)
+                        except Exception:
+                            dead_connections.append(connection)
+                    
+                    for c in dead_connections:
+                        if c in active_rooms[room_id]:
+                            active_rooms[room_id].remove(c)
                         
         except BlockingIOError:
             await asyncio.sleep(0.01)
         except json.JSONDecodeError:
-            pass # Hatalı paket gelirse sunucu çökmesin diye yoksay
+            pass 
         except Exception as e:
             await asyncio.sleep(0.01)
 
@@ -99,7 +103,17 @@ async def websocket_endpoint(websocket: WebSocket, room_id: str):
         print(f"[KOPTU] Bir Muhendis '{room_id}' odasindan ayrildi.")
     except Exception:
         pass
-    
+
+
+@app.get("/api/v1/active-rooms")
+def get_active_rooms():
+    current_time = time.time()
+    # Sadece son 5 saniye içinde Delphi'den veri almış "Gerçekten Canlı" odaları listele
+    live_rooms = [r_id for r_id, last_seen in active_streams.items() if current_time - last_seen < 5]
+    return {"status": "success", "active_rooms": live_rooms}
+
+
+
 # ====================================================================
 # BÖLÜM 2: FORMULA 1 GEÇMİŞ VERİ (REST API)
 # ====================================================================
