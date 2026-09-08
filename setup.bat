@@ -6,8 +6,17 @@ REM  Repo klasorunde bir kere calistir. venv olusturur ve
 REM  requirements.txt icindeki sabit surumleri yukler.
 REM ============================================================
 
-REM --- Sunucudaki Python surumune gore degistir ( or: py -3.11) ---
-set "PYLAUNCHER=py -3.12"
+REM --- Python secimi: once 'py -3' launcher, yoksa PATH'teki 'python' ---
+REM Belirli surum sabitlemek istersen:  set "PYLAUNCHER=py -3.12"
+set "PYLAUNCHER="
+py -3 --version >nul 2>&1 && set "PYLAUNCHER=py -3"
+if not defined PYLAUNCHER python --version >nul 2>&1 && set "PYLAUNCHER=python"
+if not defined PYLAUNCHER (
+    echo Python bulunamadi. python.org'dan Python 3.12 kurup PATH'e ekle.
+    goto :error
+)
+echo Kullanilan Python: %PYLAUNCHER%
+%PYLAUNCHER% --version
 
 REM Script'in bulundugu klasor (sondaki ters boluk atilir)
 set "ROOT=%~dp0"
