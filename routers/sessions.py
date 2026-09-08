@@ -159,18 +159,63 @@ def get_drivers_by_session(request: Request, race_year: int, race_name: str, ses
         return Response(content=raw_cached, media_type="application/json",
                         headers={"X-Cache": "HIT"})
 
+    # FastF1 verisi Ergast'tan gelirse TeamColor bos olur (Ergast'ta renk yok).
+    # Takim adindan tahmin edilen yedek renkler (hex, '#' yok) - kaba ama ise yarar.
+    TEAM_COLOR_FALLBACK = {
+        "red bull": "3671c6",
+        "ferrari": "e8002d",
+        "mercedes": "27f4d2",
+        "mclaren": "ff8000",
+        "aston martin": "229971",
+        "alpine": "0093cc",
+        "williams": "64c4ff",
+        "rb": "6692ff",
+        "alphatauri": "6692ff",
+        "sauber": "52e252",
+        "alfa romeo": "c92d4b",
+        "haas": "b6babd",
+    }
+
+    def _fallback_color(team_name: str) -> str:
+        low = (team_name or "").lower()
+        for key, hexval in TEAM_COLOR_FALLBACK.items():
+            if key in low:
+                return hexval
+        return ""
+
     try:
         # laps endpoint'i ile ayni yuklu Session'i paylasir (B4).
         f1_session = get_loaded_session(race_year, race_name, session_type, with_telemetry=False)
 
+        def _clean(value):
+            # NaN / None / "nan" -> "" ; kenar bosluklarini kirp
+            if value is None:
+                return ""
+            try:
+                if pd.isna(value):
+                    return ""
+            except (TypeError, ValueError):
+                pass
+            return str(value).strip()
+
         drivers_data = []
         for driver_code in f1_session.drivers:
             driver_info = f1_session.get_driver(driver_code)
+
+            first = _clean(driver_info.get("FirstName"))
+            last = _clean(driver_info.get("LastName"))
+            full = _clean(driver_info.get("FullName")) or " ".join(p for p in (first, last) if p)
+            team = _clean(driver_info.get("TeamName"))
+            color = _clean(driver_info.get("TeamColor")).lstrip("#") or _fallback_color(team)
+
             drivers_data.append({
-                "driver_code": driver_info["Abbreviation"],
-                "broadcast_name": driver_info["BroadcastName"],
-                "team_name": driver_info["TeamName"],
-                "team_color": driver_info["TeamColor"]
+                "driver_code": _clean(driver_info.get("Abbreviation")),
+                "broadcast_name": _clean(driver_info.get("BroadcastName")),
+                "full_name": full,
+                "first_name": first,
+                "last_name": last,
+                "team_name": team,
+                "team_color": color,
             })
             
         final_response = {
