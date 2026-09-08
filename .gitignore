@@ -1,0 +1,19 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+
+# Virtual env
+venv/
+.venv/
+
+# FastF1 disk cache (sunucuda yeniden uretilir, repoya girmemeli)
+f1_cache/
+
+# Loglar
+logs/
+*.log
+
+# Ortam degiskenleri
+.env

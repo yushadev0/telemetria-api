@@ -1,5 +1,7 @@
 import fastf1
 import os
+import threading
+from collections import OrderedDict
 import pandas as pd
 import numpy as np
 
@@ -10,10 +12,71 @@ if not os.path.exists(cache_dir):
 
 fastf1.Cache.enable_cache(cache_dir)
 
+# Prod'da FastF1'in ayrintili INFO log'lari NSSM ile diske yaziliyor -> gurultu + I/O.
+# Sadece uyari ve ustunu birak (FASTF1_LOG env ile degistirilebilir).
+try:
+    fastf1.set_log_level(os.getenv("FASTF1_LOG", "WARNING"))
+except Exception:
+    pass
+
+# ---------------------------------------------------------------------------
+# B4: Yuklenmis FastF1 Session nesnelerini process icinde tut.
+#   - telemetry / compare  -> ayni (year,race,session) icin TEK load(telemetry=True)
+#   - laps / drivers       -> ayni seans icin TEK load(telemetry=False)
+# Onceden her endpoint her cagride bastan get_session().load() yapiyordu (~15-40 sn).
+# Tam yuklu session nesneleri buyuktur; kac tane tutulacagi SESSION_CACHE_MAX ile ayarlanir.
+# ---------------------------------------------------------------------------
+_SESSION_CACHE_MAX = int(os.getenv("SESSION_CACHE_MAX", "4"))
+_session_cache = OrderedDict()            # skey -> loaded fastf1 Session
+_session_cache_lock = threading.Lock()   # _session_cache sozlugunu korur
+_load_locks = {}                         # skey -> Lock (ayni seansi iki kez yuklememek icin)
+_load_locks_guard = threading.Lock()
+
+
+def _skey(race_year, race_name, session_type, with_telemetry):
+    return (int(race_year), str(race_name).strip().lower(),
+            str(session_type).strip().upper(), bool(with_telemetry))
+
+
+def _load_lock_for(skey):
+    with _load_locks_guard:
+        lk = _load_locks.get(skey)
+        if lk is None:
+            lk = threading.Lock()
+            _load_locks[skey] = lk
+        return lk
+
+
+def get_loaded_session(race_year, race_name, session_type, with_telemetry=True):
+    """(year,race,session,with_telemetry) icin yuklenmis Session'i dondurur; yoksa yukler ve cache'ler."""
+    skey = _skey(race_year, race_name, session_type, with_telemetry)
+
+    with _session_cache_lock:
+        sess = _session_cache.get(skey)
+        if sess is not None:
+            _session_cache.move_to_end(skey)
+            return sess
+
+    # Yukleme uzun surer: ayni seans icin serilestir, farkli seanslar paralel yuklensin.
+    with _load_lock_for(skey):
+        with _session_cache_lock:
+            sess = _session_cache.get(skey)
+            if sess is not None:
+                _session_cache.move_to_end(skey)
+                return sess
+
+        sess = fastf1.get_session(race_year, race_name, session_type)
+        sess.load(telemetry=with_telemetry, weather=False, messages=False)
+
+        with _session_cache_lock:
+            _session_cache[skey] = sess
+            while len(_session_cache) > _SESSION_CACHE_MAX:
+                _session_cache.popitem(last=False)
+        return sess
+
 def get_lap_telemetry(race_year: int, race_name: str, session_type: str, driver_code: str, lap_param: str = "fastest", sample_rate: int = 5):
     try:
-        f1_session = fastf1.get_session(race_year, race_name, session_type)
-        f1_session.load(telemetry=True, weather=False, messages=False)
+        f1_session = get_loaded_session(race_year, race_name, session_type, with_telemetry=True)
 
         # Pilotun tüm turlarını çek
         driver_laps = f1_session.laps.pick_drivers(driver_code)
@@ -25,14 +88,14 @@ def get_lap_telemetry(race_year: int, race_name: str, session_type: str, driver_
             target_lap = driver_laps[driver_laps['LapNumber'] == float(lap_param)].iloc[0]
 
         telemetry_data = target_lap.get_telemetry()
-        
-        # Track Map İçin X, Y, Z Koordinatlarını Ekliyoruz
-        columns_to_keep = ['Time', 'Distance', 'Speed', 'nGear', 'Throttle', 'Brake', 'DRS', 'X', 'Y', 'Z']
+
+        # Track Map icin X, Y yeterli (2D). Z kolonu frontend'de kullanilmiyor -> atildi.
+        columns_to_keep = ['Time', 'Distance', 'Speed', 'nGear', 'Throttle', 'Brake', 'DRS', 'X', 'Y']
         filtered_telemetry = telemetry_data[columns_to_keep].copy()
-        
+
         sampled_telemetry = filtered_telemetry.iloc[::sample_rate, :].copy()
         sampled_telemetry['Time'] = sampled_telemetry['Time'].dt.total_seconds()
-        
+
         # Tüm anahtarları snake_case formatına çeviriyoruz
         sampled_telemetry.rename(columns={
             'Time': 'time',
@@ -43,16 +106,25 @@ def get_lap_telemetry(race_year: int, race_name: str, session_type: str, driver_
             'Brake': 'brake',
             'DRS': 'drs',
             'X': 'x',
-            'Y': 'y',
-            'Z': 'z'
+            'Y': 'y'
         }, inplace=True)
-        
+
+        sampled_telemetry = sampled_telemetry.fillna(0)
+
+        # B6: JSON boyutunu kucult - gereksiz ondalik haneleri kirp / tamsayiya cek.
+        # (ornek: "243.617899999" -> 243.6 ; "1234.0" -> 1234)  ~30-40% daha kucuk govde.
+        sampled_telemetry['time'] = sampled_telemetry['time'].round(3)
+        sampled_telemetry['distance'] = sampled_telemetry['distance'].round(1)
+        sampled_telemetry['speed'] = sampled_telemetry['speed'].round(1)
+        for _c in ('n_gear', 'drs', 'x', 'y', 'throttle'):
+            sampled_telemetry[_c] = sampled_telemetry[_c].round(0).astype('int64')
+
         # orient="records" yerine orient="list" kullanarak dizilere çeviriyoruz
-        final_result = sampled_telemetry.fillna(0).to_dict(orient="list")
-        
+        final_result = sampled_telemetry.to_dict(orient="list")
+
         # UI tarafında tur zamanını gösterebilmek için ekstra meta veriler
         final_result["lap_number"] = int(target_lap['LapNumber'])
-        final_result["lap_time"] = target_lap['LapTime'].total_seconds() if pd.notna(target_lap['LapTime']) else None
+        final_result["lap_time"] = round(target_lap['LapTime'].total_seconds(), 3) if pd.notna(target_lap['LapTime']) else None
         
         return final_result
 
@@ -62,9 +134,8 @@ def get_lap_telemetry(race_year: int, race_name: str, session_type: str, driver_
 def get_comparison_telemetry(race_year: int, race_name: str, session_type: str, driver1: str, driver2: str, lap_param: str = "fastest"):
     """ İki pilotun telemetrisini Sabit Mesafe (Fixed Distance) ile kıyaslar ve Delta zamanı hesaplar """
     try:
-        f1_session = fastf1.get_session(race_year, race_name, session_type)
-        f1_session.load(telemetry=True, weather=False, messages=False)
-        
+        f1_session = get_loaded_session(race_year, race_name, session_type, with_telemetry=True)
+
         laps_d1 = f1_session.laps.pick_drivers(driver1)
         laps_d2 = f1_session.laps.pick_drivers(driver2)
         
@@ -169,9 +240,8 @@ def get_driver_laps_summary(race_year: int, race_name: str, session_type: str, d
     Gerçek F1 kurallarına göre Sektör Renklerini (Mor, Yeşil, Sarı) hesaplar.
     """
     try:
-        f1_session = fastf1.get_session(race_year, race_name, session_type)
-        # Sadece tur verilerini indir (Aşırı hızlı çalışır)
-        f1_session.load(telemetry=False, weather=False, messages=False)
+        # Sadece tur verileri (telemetry=False) -> hizli; drivers endpoint'i ile ayni load'u paylasir.
+        f1_session = get_loaded_session(race_year, race_name, session_type, with_telemetry=False)
 
         all_laps = f1_session.laps
         

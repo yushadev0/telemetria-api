@@ -1,10 +1,12 @@
 import asyncio
 import socket
 import json
-from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect, Response
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 from services.f1_service import get_lap_telemetry, get_comparison_telemetry, get_driver_laps_summary
-from core.redis_client import get_from_cache, set_to_cache
+from core.redis_client import get_from_cache, set_to_cache, get_raw_from_cache
+from core import cache_keys as ck
 from routers import sessions
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
@@ -27,6 +29,10 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Telemetri JSON yanitlari yuz KB - birkac MB; gzip ag suresini kabaca %85-90 azaltir.
+# 1 KB altindaki yanitlar (schedule vb.) sikistirilmaz.
+app.add_middleware(GZipMiddleware, minimum_size=1024)
+
 # ====================================================================
 # BÖLÜM 1: ASSETTO CORSA CANLI PİT DUVARI (MULTI-ROOM MİMARİSİ)
 # ====================================================================
@@ -44,19 +50,21 @@ sock.setblocking(False)
 
 async def udp_listener():
     print(f"[BASARILI] Assetto Corsa UDP Koprusu {UDP_PORT} portunda coklu oda destegiyle acildi!")
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
     while True:
         try:
-            data, addr = sock.recvfrom(4096)
+            # B7: event-based bekleme. Onceki kod veri yokken 10ms'de bir donup
+            # bosa CPU harciyordu (100 uyanma/sn); sock_recv IOCP/selector ile bekler.
+            data = await loop.sock_recv(sock, 4096)
             telemetry_str = data.decode('utf-8')
-            
+
             telemetry_data = json.loads(telemetry_str)
             room_id = telemetry_data.get("room")
-            
+
             if room_id:
-                # 🧠 YENİ: Odanın canlı olduğunu ve son veri gelme zamanını kaydet!
+                # Odanın canlı olduğunu ve son veri gelme zamanını kaydet
                 active_streams[room_id] = time.time()
-                
+
                 if room_id in active_rooms:
                     dead_connections = []
                     for connection in active_rooms[room_id]:
@@ -64,21 +72,23 @@ async def udp_listener():
                             await connection.send_text(telemetry_str)
                         except Exception:
                             dead_connections.append(connection)
-                    
+
                     for c in dead_connections:
                         if c in active_rooms[room_id]:
                             active_rooms[room_id].remove(c)
-                        
-        except BlockingIOError:
-            await asyncio.sleep(0.01)
-        except json.JSONDecodeError:
-            pass 
-        except Exception as e:
-            await asyncio.sleep(0.01)
+
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            pass
+        except Exception:
+            # Beklenmeyen hatada tight-loop'a girmemek icin kisa nefes
+            await asyncio.sleep(0.05)
 
 @app.on_event("startup")
 async def startup_event():
     asyncio.create_task(udp_listener())
+    # B5: en son bitmis yarisin populer telemetrisini arka planda onceden isit.
+    from services.prewarm import run_prewarm
+    asyncio.create_task(run_prewarm())
 
 # DİKKAT: Uç noktamıza {room_id} değişkeni eklendi!
 @app.websocket("/ws/live/{room_id}")
@@ -136,12 +146,13 @@ def read_root(request: Request):
 @app.get("/api/v1/telemetry/{race_year}/{race_name}/{session_type}/{driver_code}")
 @limiter.limit("30/minute")
 def get_telemetry(request: Request, race_year: int, race_name: str, session_type: str, driver_code: str, lap: str = "fastest"):
-    cache_key = f"telemetry_{race_year}_{race_name}_{session_type}_{driver_code}_{lap}"
-    cached_response = get_from_cache(cache_key)
-    if cached_response:
-        cached_response["cache"] = "hit"
-        return cached_response
-        
+    cache_key = ck.telemetry(race_year, race_name, session_type, driver_code, lap)
+    raw_cached = get_raw_from_cache(cache_key)
+    if raw_cached:
+        # Ham JSON'u dogrudan dondur: json.loads + FastAPI encoder + json.dumps atlanir.
+        return Response(content=raw_cached, media_type="application/json",
+                        headers={"X-Cache": "HIT"})
+
     telemetry_response = get_lap_telemetry(race_year, race_name, session_type, driver_code, lap)
     
     if isinstance(telemetry_response, dict) and "error_message" in telemetry_response:
@@ -160,11 +171,11 @@ def get_telemetry(request: Request, race_year: int, race_name: str, session_type
 @app.get("/api/v1/compare/{race_year}/{race_name}/{session_type}/{driver1}/{driver2}")
 @limiter.limit("15/minute")
 def get_compare(request: Request, race_year: int, race_name: str, session_type: str, driver1: str, driver2: str, lap: str = "fastest"):
-    cache_key = f"compare_v5{race_year}_{race_name}_{session_type}_{driver1}_{driver2}_{lap}"
-    cached_response = get_from_cache(cache_key)
-    if cached_response:
-        cached_response["cache"] = "hit"
-        return cached_response
+    cache_key = ck.compare(race_year, race_name, session_type, driver1, driver2, lap)
+    raw_cached = get_raw_from_cache(cache_key)
+    if raw_cached:
+        return Response(content=raw_cached, media_type="application/json",
+                        headers={"X-Cache": "HIT"})
 
     compare_response = get_comparison_telemetry(race_year, race_name, session_type, driver1, driver2, lap)
 
@@ -185,11 +196,11 @@ app.include_router(sessions.router, prefix="/api/v1/schedule", tags=["Schedule"]
 @app.get("/api/v1/laps/{race_year}/{race_name}/{session_type}/{driver_code}")
 @limiter.limit("40/minute")
 def get_laps_summary(request: Request, race_year: int, race_name: str, session_type: str, driver_code: str):
-    cache_key = f"laps_summary_v2{race_year}_{race_name}_{session_type}_{driver_code}"
-    cached_response = get_from_cache(cache_key)
-    if cached_response:
-        cached_response["cache"] = "hit"
-        return cached_response
+    cache_key = ck.laps_summary(race_year, race_name, session_type, driver_code)
+    raw_cached = get_raw_from_cache(cache_key)
+    if raw_cached:
+        return Response(content=raw_cached, media_type="application/json",
+                        headers={"X-Cache": "HIT"})
 
     laps_response = get_driver_laps_summary(race_year, race_name, session_type, driver_code)
 

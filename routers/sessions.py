@@ -1,7 +1,9 @@
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Request, Response
 import fastf1
 import pandas as pd
-from core.redis_client import get_from_cache, set_to_cache
+from core.redis_client import get_from_cache, set_to_cache, get_raw_from_cache
+from core import cache_keys as ck
+from services.f1_service import get_loaded_session
 from slowapi import Limiter
 from slowapi.util import get_remote_address
 
@@ -68,12 +70,11 @@ def get_available_years(request: Request):
 @router.get("/{race_year}/races")
 @limiter.limit("60/minute")
 def get_races_by_year(request: Request, race_year: int):
-    cache_key = f"schedule_races_v4{race_year}"
-    cached_response = get_from_cache(cache_key)
-    
-    if cached_response:
-        cached_response["cache"] = "hit"
-        return cached_response
+    cache_key = ck.schedule_races(race_year)
+    raw_cached = get_raw_from_cache(cache_key)
+    if raw_cached:
+        return Response(content=raw_cached, media_type="application/json",
+                        headers={"X-Cache": "HIT"})
 
     try:
         schedule = fastf1.get_event_schedule(race_year)
@@ -93,7 +94,7 @@ def get_races_by_year(request: Request, race_year: int):
                 "event_name": row["EventName"],
                 "event_date": str(row["EventDate"].date()),
                 "track_name": track_info["name"],  # YENİ EKLENDİ (Örn: Suzuka International Racing Course)
-                "track_image": f"https://hasup.net/assets/tracks/{track_info['file']}" # YENİ EKLENDİ
+                "track_image": f"https://yusa.app/assets/tracks/{track_info['file']}" # YENİ EKLENDİ
             })
             
         final_response = {
@@ -114,13 +115,11 @@ def get_races_by_year(request: Request, race_year: int):
 @router.get("/{race_year}/{race_name}/sessions")
 @limiter.limit("60/minute")
 def get_sessions_by_race(request: Request, race_year: int, race_name: str):
-    safe_race_name = race_name.replace(" ", "_")
-    cache_key = f"schedule_sessions_{race_year}_{safe_race_name}"
-    
-    cached_response = get_from_cache(cache_key)
-    if cached_response:
-        cached_response["cache"] = "hit"
-        return cached_response
+    cache_key = ck.schedule_sessions(race_year, race_name)
+    raw_cached = get_raw_from_cache(cache_key)
+    if raw_cached:
+        return Response(content=raw_cached, media_type="application/json",
+                        headers={"X-Cache": "HIT"})
 
     try:
         event = fastf1.get_event(race_year, race_name)
@@ -154,18 +153,16 @@ def get_sessions_by_race(request: Request, race_year: int, race_name: str):
 @router.get("/{race_year}/{race_name}/{session_type}/drivers")
 @limiter.limit("60/minute")
 def get_drivers_by_session(request: Request, race_year: int, race_name: str, session_type: str):
-    safe_race_name = race_name.replace(" ", "_")
-    cache_key = f"schedule_drivers_{race_year}_{safe_race_name}_{session_type}"
-    
-    cached_response = get_from_cache(cache_key)
-    if cached_response:
-        cached_response["cache"] = "hit"
-        return cached_response
+    cache_key = ck.schedule_drivers(race_year, race_name, session_type)
+    raw_cached = get_raw_from_cache(cache_key)
+    if raw_cached:
+        return Response(content=raw_cached, media_type="application/json",
+                        headers={"X-Cache": "HIT"})
 
     try:
-        f1_session = fastf1.get_session(race_year, race_name, session_type)
-        f1_session.load(telemetry=False, weather=False, messages=False)
-        
+        # laps endpoint'i ile ayni yuklu Session'i paylasir (B4).
+        f1_session = get_loaded_session(race_year, race_name, session_type, with_telemetry=False)
+
         drivers_data = []
         for driver_code in f1_session.drivers:
             driver_info = f1_session.get_driver(driver_code)
