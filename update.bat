@@ -1,8 +1,8 @@
 @echo off
 setlocal EnableExtensions
 REM ============================================================
-REM  Telemetria API - GUNCELLEME / yeniden deploy
-REM  git pull -> pip install -> NSSM servisini yeniden baslat
+REM  Telemetria API - GUNCELLEME
+REM  nssm stop -> git pull -> nssm start
 REM ============================================================
 
 set "SVC=TelemetriaAPI"
@@ -10,31 +10,23 @@ set "ROOT=%~dp0"
 set "ROOT=%ROOT:~0,-1%"
 pushd "%ROOT%"
 
-if not exist "venv\Scripts\python.exe" (
-    echo venv yok. Once setup.bat calistir.
-    goto :error
-)
+echo [1/3] Servis durduruluyor (%SVC%)...
+nssm stop %SVC%
 
-echo [1/4] Servis durduruluyor (%SVC%)...
-nssm stop %SVC% >nul 2>&1
-
-echo [2/4] Kod cekiliyor (git pull)...
+echo [2/3] Kod cekiliyor (git pull)...
 git pull
 if errorlevel 1 goto :error
 
-echo [3/4] Bagimliliklar kontrol ediliyor...
-"venv\Scripts\python.exe" -m pip install -r requirements.txt
+echo [3/3] Servis baslatiliyor (%SVC%)...
+nssm start %SVC%
 if errorlevel 1 goto :error
-
-echo [4/4] Servis baslatiliyor...
-nssm restart %SVC%
-if errorlevel 1 nssm start %SVC%
 
 timeout /t 2 /nobreak >nul
 nssm status %SVC%
 
 echo.
-echo === GUNCELLEME TAMAM ===   Loglar: %ROOT%\logs\out.log
+echo === GUNCELLEME TAMAM ===
+echo Onbellegi de temizlemek icin: clear_redis_cache.bat
 popd
 endlocal
 exit /b 0
