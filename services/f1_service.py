@@ -112,18 +112,31 @@ def get_loaded_session(race_year, race_name, session_type, with_telemetry=True):
         return sess
 
 
-def _require_timing(sess):
+def _require_timing(sess, race_year, race_name, session_type):
     """
     F1 CDN blogu / ag hatasi: `load()` exception FIRLATMAZ, sadece uyari basip
     `.laps`'i bos birakir -> sonraki erisim "data ... not loaded yet" der.
     Timing/telemetri isteyen endpoint'lerde bunu net bir hataya cevir.
     (drivers endpoint'i Ergast `results`'a dayandigi icin bu kontrole girmez.)
+
+    Bos ise, ayrica services.gh_dispatch ile GitHub Actions'taki cache-warm
+    workflow'unu bu (year,race,session) icin tetiklemeyi dener -- basarili
+    olursa kullaniciya "birazdan hazir olacak" mesaji doner, GITHUB_DISPATCH_TOKEN
+    tanimli degilse eski FASTF1_PROXY mesajina duser.
     """
     try:
         empty = sess.laps is None or len(sess.laps) == 0
     except Exception:
         empty = True
     if empty:
+        from services.gh_dispatch import trigger_cache_warm
+
+        if trigger_cache_warm(race_year, race_name, session_type):
+            raise RuntimeError(
+                "Bu seansin verisi henuz cache'te yok, arka planda hazirlaniyor "
+                "(GitHub Actions tetiklendi, genelde birkac dakika surer). "
+                "Lutfen birazdan tekrar deneyin."
+            )
         raise RuntimeError(
             "F1 live-timing verisi indirilemedi "
             "(livetiming.formula1.com sunucu IP'sini engelliyor olabilir). "
@@ -133,7 +146,7 @@ def _require_timing(sess):
 def get_lap_telemetry(race_year: int, race_name: str, session_type: str, driver_code: str, lap_param: str = "fastest", sample_rate: int = 5):
     try:
         f1_session = get_loaded_session(race_year, race_name, session_type, with_telemetry=True)
-        _require_timing(f1_session)
+        _require_timing(f1_session, race_year, race_name, session_type)
 
         # Pilotun tüm turlarını çek
         driver_laps = f1_session.laps.pick_drivers(driver_code)
@@ -192,7 +205,7 @@ def get_comparison_telemetry(race_year: int, race_name: str, session_type: str, 
     """ İki pilotun telemetrisini Sabit Mesafe (Fixed Distance) ile kıyaslar ve Delta zamanı hesaplar """
     try:
         f1_session = get_loaded_session(race_year, race_name, session_type, with_telemetry=True)
-        _require_timing(f1_session)
+        _require_timing(f1_session, race_year, race_name, session_type)
 
         laps_d1 = f1_session.laps.pick_drivers(driver1)
         laps_d2 = f1_session.laps.pick_drivers(driver2)
@@ -300,7 +313,7 @@ def get_driver_laps_summary(race_year: int, race_name: str, session_type: str, d
     try:
         # Sadece tur verileri (telemetry=False) -> hizli; drivers endpoint'i ile ayni load'u paylasir.
         f1_session = get_loaded_session(race_year, race_name, session_type, with_telemetry=False)
-        _require_timing(f1_session)
+        _require_timing(f1_session, race_year, race_name, session_type)
 
         all_laps = f1_session.laps
         

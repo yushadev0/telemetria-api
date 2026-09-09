@@ -15,6 +15,15 @@ on:
         description: "Bu calistirmada gercekten indirilecek (cache'te olmayan) en fazla seans sayisi"
         required: false
         default: "25"
+      target_year:
+        description: "Tek seans hedefi (opsiyonel): yil. Bos birakilirsa tam tarama yapilir."
+        required: false
+      target_race:
+        description: "Tek seans hedefi: event adi, orn. 'Miami Grand Prix'"
+        required: false
+      target_session:
+        description: "Tek seans hedefi: 'Race' veya 'Qualifying'"
+        required: false
 
 jobs:
   warm-and-sync:
@@ -52,7 +61,7 @@ jobs:
       - name: Pull existing cache from server
         run: |
           mkdir -p f1_cache
-          rsync -az --partial \
+          rsync -rltz --partial --no-owner --no-group \
             -e "ssh -i ~/.ssh/id_ed25519" \
             "$DEPLOY_USER@$DEPLOY_HOST:$DEPLOY_PATH/" \
             f1_cache/
@@ -60,11 +69,14 @@ jobs:
       - name: Warm missing sessions
         env:
           MAX_NEW_SESSIONS: ${{ github.event.inputs.max_new_sessions || '25' }}
+          TARGET_YEAR: ${{ github.event.inputs.target_year }}
+          TARGET_RACE: ${{ github.event.inputs.target_race }}
+          TARGET_SESSION: ${{ github.event.inputs.target_session }}
         run: python scripts/auto_warm.py
 
       - name: Push updated cache to server
         run: |
-          rsync -az --partial \
+          rsync -rltz --partial --no-owner --no-group \
             -e "ssh -i ~/.ssh/id_ed25519" \
             f1_cache/ \
             "$DEPLOY_USER@$DEPLOY_HOST:$DEPLOY_PATH/"

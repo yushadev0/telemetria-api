@@ -15,6 +15,11 @@ Env:
                        seans sayisi ustsiniri. Ilk calistirmada yillarca birikmis
                        eksik seans olabilir; bunlari tek seferde degil birkac
                        haftalik calistirmaya yayarak indirmek icin. Varsayilan 25.
+  TARGET_YEAR, TARGET_RACE, TARGET_SESSION
+                    -- ucu de doluysa tam taramayi atlayip SADECE bu tek seansi
+                       isitir. Sunucu (services/gh_dispatch.py) cache'te olmayan
+                       bir seans istegiyle karsilastiginda workflow_dispatch API'siyle
+                       bunlari doldurup workflow'u tetikler.
 """
 import os
 import sys
@@ -68,7 +73,29 @@ def warm(year, event_name, session_type):
         return False, False, time.time() - t0, exc
 
 
+def _single_target():
+    year = os.getenv("TARGET_YEAR", "").strip()
+    race = os.getenv("TARGET_RACE", "").strip()
+    session = os.getenv("TARGET_SESSION", "").strip()
+    if year and race and session:
+        return int(year), race, session
+    return None
+
+
 def main():
+    single = _single_target()
+    if single:
+        year, race, session = single
+        print(f"Tekli hedef modu: {year} {race} {session}\n", flush=True)
+        success, was_cached, elapsed, exc = warm(year, race, session)
+        label = f"{year} {race} {session}"
+        if not success:
+            print(f"  FAIL  {label}  ({elapsed:.0f}s)  -> {exc!r}", flush=True)
+            sys.exit(1)
+        tag = "zaten cache'teydi" if was_cached else "yeni indirildi"
+        print(f"  OK    {label}  ({elapsed:.0f}s)  -- {tag}", flush=True)
+        return
+
     targets = list_targets()
     print(f"{len(targets)} aday seans ({START_YEAR}-{date.today().year}, Race+Qualifying).\n", flush=True)
 
@@ -83,6 +110,9 @@ def main():
         label = f"{year} {event_name} {session_type}"
 
         if not success:
+            if "RateLimitExceeded" in type(exc).__name__:
+                print(f"\nAPI saatlik kotasina ({exc}) carpildi; kalanlar bir sonraki calistirmada denenecek.", flush=True)
+                break
             fail += 1
             print(f"  FAIL  {label}  ({elapsed:.0f}s)  -> {exc!r}", flush=True)
             continue
