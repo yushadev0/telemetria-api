@@ -1,12 +1,18 @@
 import fastf1
+import logging
 import os
 import threading
 from collections import OrderedDict
 import pandas as pd
 import numpy as np
 
-# Önbellek klasörünü belirliyoruz
-cache_dir = "f1_cache"
+_log = logging.getLogger("f1_service")
+
+# Önbellek klasörünü belirliyoruz.
+# Mutlak yol: NSSM AppDirectory yanlis ayarlansa bile cache repo kokunde kalir.
+cache_dir = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "f1_cache"
+)
 if not os.path.exists(cache_dir):
     os.makedirs(cache_dir)
 
@@ -18,6 +24,37 @@ try:
     fastf1.set_log_level(os.getenv("FASTF1_LOG", "WARNING"))
 except Exception:
     pass
+
+
+def _configure_fastf1_proxy():
+    """
+    F1 live-timing CDN'i (livetiming.formula1.com) bazi datacenter/VPS IP'lerini
+    403 ile blokluyor; boyle sunuculardan `session.load()` telemetri/timing
+    verisini indiremiyor (schedule Ergast'tan geldigi icin calisiyor).
+
+    Cozum: FASTF1_PROXY env'i verilirse FastF1'in TUM disari HTTP istekleri
+    (hem cache'li hem cache'siz session) o proxy uzerinden gecer.
+      ornek:  FASTF1_PROXY=http://kullanici:parola@1.2.3.4:8080
+    Verilmezse davranis degismez (sistem HTTPS_PROXY env'i yine de gecerli).
+    """
+    proxy = (os.getenv("FASTF1_PROXY") or "").strip()
+    if not proxy:
+        return
+    try:
+        from fastf1.req import Cache as _ReqCache
+
+        mapping = {"http": proxy, "https": proxy}
+        for attr in ("_requests_session", "_requests_session_cached"):
+            sess = getattr(_ReqCache, attr, None)
+            if sess is not None:
+                sess.proxies.update(mapping)
+        _log.warning("FastF1 istekleri proxy uzerinden yonlendirildi: %s",
+                     proxy.split("@")[-1])
+    except Exception as exc:  # noqa: BLE001 - proxy kurulamazsa servis yine acilsin
+        _log.error("FASTF1_PROXY uygulanamadi: %r", exc)
+
+
+_configure_fastf1_proxy()
 
 # ---------------------------------------------------------------------------
 # B4: Yuklenmis FastF1 Session nesnelerini process icinde tut.
@@ -74,9 +111,29 @@ def get_loaded_session(race_year, race_name, session_type, with_telemetry=True):
                 _session_cache.popitem(last=False)
         return sess
 
+
+def _require_timing(sess):
+    """
+    F1 CDN blogu / ag hatasi: `load()` exception FIRLATMAZ, sadece uyari basip
+    `.laps`'i bos birakir -> sonraki erisim "data ... not loaded yet" der.
+    Timing/telemetri isteyen endpoint'lerde bunu net bir hataya cevir.
+    (drivers endpoint'i Ergast `results`'a dayandigi icin bu kontrole girmez.)
+    """
+    try:
+        empty = sess.laps is None or len(sess.laps) == 0
+    except Exception:
+        empty = True
+    if empty:
+        raise RuntimeError(
+            "F1 live-timing verisi indirilemedi "
+            "(livetiming.formula1.com sunucu IP'sini engelliyor olabilir). "
+            "FASTF1_PROXY ayarlayin ya da f1_cache/ klasorunu onceden doldurun."
+        )
+
 def get_lap_telemetry(race_year: int, race_name: str, session_type: str, driver_code: str, lap_param: str = "fastest", sample_rate: int = 5):
     try:
         f1_session = get_loaded_session(race_year, race_name, session_type, with_telemetry=True)
+        _require_timing(f1_session)
 
         # Pilotun tüm turlarını çek
         driver_laps = f1_session.laps.pick_drivers(driver_code)
@@ -135,6 +192,7 @@ def get_comparison_telemetry(race_year: int, race_name: str, session_type: str, 
     """ İki pilotun telemetrisini Sabit Mesafe (Fixed Distance) ile kıyaslar ve Delta zamanı hesaplar """
     try:
         f1_session = get_loaded_session(race_year, race_name, session_type, with_telemetry=True)
+        _require_timing(f1_session)
 
         laps_d1 = f1_session.laps.pick_drivers(driver1)
         laps_d2 = f1_session.laps.pick_drivers(driver2)
@@ -242,6 +300,7 @@ def get_driver_laps_summary(race_year: int, race_name: str, session_type: str, d
     try:
         # Sadece tur verileri (telemetry=False) -> hizli; drivers endpoint'i ile ayni load'u paylasir.
         f1_session = get_loaded_session(race_year, race_name, session_type, with_telemetry=False)
+        _require_timing(f1_session)
 
         all_laps = f1_session.laps
         
