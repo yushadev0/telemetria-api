@@ -105,10 +105,21 @@ def get_loaded_session(race_year, race_name, session_type, with_telemetry=True):
         sess = fastf1.get_session(race_year, race_name, session_type)
         sess.load(telemetry=with_telemetry, weather=False, messages=False)
 
-        with _session_cache_lock:
-            _session_cache[skey] = sess
-            while len(_session_cache) > _SESSION_CACHE_MAX:
-                _session_cache.popitem(last=False)
+        # F1 CDN blogu / gecici ag hatasi laps'i bos birakabilir (load() exception
+        # firlatmiyor). Bu basarisiz Session'i bellek-ici cache'e YAZMIYORUZ:
+        # yazarsak, disk cache'i (ornegin GitHub Actions warm sonrasi) sonradan
+        # dolsa bile bu process ayakta oldugu surece sonraki her istek bu ayni
+        # bos nesneyi geri dondurur ve retry hicbir zaman gercek veriyi gormez.
+        try:
+            laps_empty = sess.laps is None or len(sess.laps) == 0
+        except Exception:
+            laps_empty = True
+
+        if not laps_empty:
+            with _session_cache_lock:
+                _session_cache[skey] = sess
+                while len(_session_cache) > _SESSION_CACHE_MAX:
+                    _session_cache.popitem(last=False)
         return sess
 
 
