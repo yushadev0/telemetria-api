@@ -31,19 +31,30 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
+      - name: Load deploy config
+        # Secret'lar GitHub UI'a kopyala-yapistirilirken satir sonu/bosluk karakteri
+        # eklenmesi cok yaygin (ornegin "hostname contains invalid characters" hatasi
+        # buradan gelir) -- burada bir kere temizleyip GITHUB_ENV'e yaziyoruz.
+        run: |
+          {
+            echo "DEPLOY_USER=$(printf '%s' "${{ secrets.CACHE_DEPLOY_USER }}" | tr -d '[:space:]')"
+            echo "DEPLOY_HOST=$(printf '%s' "${{ secrets.CACHE_DEPLOY_HOST }}" | tr -d '[:space:]')"
+            echo "DEPLOY_PATH=$(printf '%s' "${{ secrets.CACHE_DEPLOY_PATH }}" | tr -d '[:space:]')"
+          } >> "$GITHUB_ENV"
+
       - name: Set up SSH
         run: |
           mkdir -p ~/.ssh
-          printf '%s\n' "${{ secrets.CACHE_DEPLOY_SSH_KEY }}" > ~/.ssh/id_ed25519
+          printf '%s\n' "${{ secrets.CACHE_DEPLOY_SSH_KEY }}" | tr -d '\r' > ~/.ssh/id_ed25519
           chmod 600 ~/.ssh/id_ed25519
-          ssh-keyscan -H "${{ secrets.CACHE_DEPLOY_HOST }}" >> ~/.ssh/known_hosts
+          ssh-keyscan -H "$DEPLOY_HOST" >> ~/.ssh/known_hosts
 
       - name: Pull existing cache from server
         run: |
           mkdir -p f1_cache
           rsync -az --partial \
             -e "ssh -i ~/.ssh/id_ed25519" \
-            "${{ secrets.CACHE_DEPLOY_USER }}@${{ secrets.CACHE_DEPLOY_HOST }}:${{ secrets.CACHE_DEPLOY_PATH }}/" \
+            "$DEPLOY_USER@$DEPLOY_HOST:$DEPLOY_PATH/" \
             f1_cache/
 
       - name: Warm missing sessions
@@ -56,4 +67,4 @@ jobs:
           rsync -az --partial \
             -e "ssh -i ~/.ssh/id_ed25519" \
             f1_cache/ \
-            "${{ secrets.CACHE_DEPLOY_USER }}@${{ secrets.CACHE_DEPLOY_HOST }}:${{ secrets.CACHE_DEPLOY_PATH }}/"
+            "$DEPLOY_USER@$DEPLOY_HOST:$DEPLOY_PATH/"
