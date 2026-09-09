@@ -1,0 +1,59 @@
+name: F1 Cache Auto-Warm
+
+# Neden: canli sunucunun IP'si (Contabo/AS51167) F1'in CloudFront WAF'i tarafindan
+# 403 ile bloklaniyor, session.load() telemetri indiremiyor. Bu runner bloklu degil:
+# eksik Race/Qualifying seanslarini burada indirip sunucudaki f1_cache/'e rsync eder.
+# scripts/auto_warm.py detaylari icerir.
+
+on:
+  schedule:
+    # Her Pazartesi 06:00 UTC - hafta sonu yarisindan sonra veri FastF1'de arsivlenmis olur.
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
+    inputs:
+      max_new_sessions:
+        description: "Bu calistirmada gercekten indirilecek (cache'te olmayan) en fazla seans sayisi"
+        required: false
+        default: "25"
+
+jobs:
+  warm-and-sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Set up SSH
+        run: |
+          mkdir -p ~/.ssh
+          printf '%s\n' "${{ secrets.CACHE_DEPLOY_SSH_KEY }}" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          ssh-keyscan -H "${{ secrets.CACHE_DEPLOY_HOST }}" >> ~/.ssh/known_hosts
+
+      - name: Pull existing cache from server
+        run: |
+          mkdir -p f1_cache
+          rsync -az --partial \
+            -e "ssh -i ~/.ssh/id_ed25519" \
+            "${{ secrets.CACHE_DEPLOY_USER }}@${{ secrets.CACHE_DEPLOY_HOST }}:${{ secrets.CACHE_DEPLOY_PATH }}/" \
+            f1_cache/
+
+      - name: Warm missing sessions
+        env:
+          MAX_NEW_SESSIONS: ${{ github.event.inputs.max_new_sessions || '25' }}
+        run: python scripts/auto_warm.py
+
+      - name: Push updated cache to server
+        run: |
+          rsync -az --partial \
+            -e "ssh -i ~/.ssh/id_ed25519" \
+            f1_cache/ \
+            "${{ secrets.CACHE_DEPLOY_USER }}@${{ secrets.CACHE_DEPLOY_HOST }}:${{ secrets.CACHE_DEPLOY_PATH }}/"
