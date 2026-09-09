@@ -65,9 +65,18 @@ def list_targets():
 def warm(year, event_name, session_type):
     t0 = time.time()
     try:
-        get_loaded_session(year, event_name, session_type, with_telemetry=True)
+        sess = get_loaded_session(year, event_name, session_type, with_telemetry=True)
         get_loaded_session(year, event_name, session_type, with_telemetry=False)
         elapsed = time.time() - t0
+
+        # FastF1 load() basarisiz olunca exception FIRLATMAZ, sadece .laps'i bos
+        # birakir (_require_timing'deki ile ayni kontrol). Bunu burada da
+        # dogrulamazsak, CI runner'i bile bloklandiginda "basarili" diye
+        # BOS bir cache'i sunucuya push ederiz -- retry hep aynı bos sonucu gorur.
+        laps_empty = sess.laps is None or len(sess.laps) == 0
+        if laps_empty:
+            return False, False, elapsed, RuntimeError("laps bos geldi (CDN engeli/veri yok, bu runner'dan da)")
+
         return True, elapsed < CACHE_HIT_THRESHOLD_S, elapsed, None
     except Exception as exc:  # noqa: BLE001
         return False, False, time.time() - t0, exc

@@ -32,6 +32,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Check F1 CDN reachability from this runner
+        run: curl -sI https://livetiming.formula1.com/static/ | head -8 || true
+
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
